@@ -1,7 +1,7 @@
 __author__ = 'WangZhe'
 # coding=utf-8
 import time
-import logging
+from model.mylog import *
 
 class BaseModel():
 
@@ -13,7 +13,7 @@ class BaseModel():
         if model_name != "":
             self.load_model(model_name)
 
-    @logging.run_time
+    @run_time
     def sparse_file(self,input_name,output_name):
         cur_index = 0
         with open(input_name,'r') as f_read:
@@ -40,11 +40,14 @@ class BaseModel():
 
 
 
-    @logging.run_time
+    @run_time
     def submit_data(self,predict_list,save_file_name):
+        index = 0
         with open(save_file_name,'w') as f:
             for uid,predict in predict_list:
-                logging.info("{0}:{1}".format(uid,predict))
+                # logging.info("{0}:{1}".format(uid,predict))
                 if str(predict) == '1':
                     f.write(uid + "\n")
+                    index += 1
 
+        mylog.info(index,'blue')

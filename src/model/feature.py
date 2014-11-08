@@ -2,21 +2,27 @@
 # created by WangZhe on 2014/11/2
 import os
 import collections
+from model.mylog import *
 from operator import add
 
 hive_path = '/opt/apache-hive-0.13.1-bin/bin/hive'
 work_dir = '/home/wangzhe/ccf/data/feature/train/wz/'
 database = 'ccf_train'
+
 def read_hive(sql):
     execute = '''{0} -e "{1}" --database {2}'''.format(hive_path,sql,database)
     print execute
     for line in os.popen(execute):
         line_list = line.strip().split("\t")
+        logging.debug(line_list)
+        if len(line_list) == 1:
+            line_list.append('NULL')
         yield line_list
 
+
 def handle(feature_name,sql):
-    print "{0} start".format(feature_name)
     type = len(feature_name)
+    logging.info("feature:{0} start".format(feature_name))
     with open(work_dir + feature_name + ".txt",'w') as f:
         uid_dict = collections.defaultdict(list)
         if type == 3:
@@ -29,7 +35,8 @@ def handle(feature_name,sql):
         for uid,key_value_list in uid_dict.iteritems():
             result_list = ["{0}:{1}".format(key,value) for key,value in key_value_list]
             f.write("{0}\t{1}\n".format(uid,"\t".join(result_list)))
-    print "{0} end".format(feature_name)
+
+    logging.info("feature:{0} end".format(feature_name))
 
 def handle_transform(output):
     sql = "select distinct uid from transformdata"
@@ -45,11 +52,32 @@ def read_transform(input):
             is_transform.add(uid)
     return is_transform
 
-def feature_to_fdata():
-    pass
+@run_time
+def feature_to_fdata(file_name):
+    from pyspark import SparkContext
+    def handle(x):
+        line = x.split("\t")
+        return line[0],line[1:]
+    sc = SparkContext(appName="feature_to_fdata")
+    data = sc.textFile(file_name)
+    result = data.map(handle).reduceByKey(lambda x,y:list(x)+list(y))
+    transform_set = read_transform("/home/wangzhe/ccf/data/feature/train/wz/transform.txt")
+    transform_broadcast = sc.broadcast(transform_set)
+
+    def handle2(x):
+        uid,values = x
+        label = '1' if uid in transform_broadcast.value else '0'
+        value_map = {}
+        for item in values:
+            key,value = item.split(":")
+            value_map[key] = float(value)
+        return uid,label,value_map
+
+    return result.map(handle2)
+
+@run_time
 def spark_combine(input,output):
     from pyspark import SparkContext
-    print "combine start"
     def handle(x):
         line = x.split("\t")
         return line[0],line[1:]
@@ -62,7 +90,6 @@ def spark_combine(input,output):
         for uid,result_list in result:
             is_transform = '1' if uid in transform_set else '0'
             f.write("{0}\t{1}\t{2}\n".format(uid,is_transform,"\t".join(result_list)))
-    print "combine end"
 
 def combine(feature_name,output):
     transform_set = read_transform("transform.txt")

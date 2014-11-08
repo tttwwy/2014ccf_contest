@@ -7,15 +7,38 @@ from pyspark.mllib.regression import LabeledPoint
 from pyspark.mllib.linalg import SparseVector
 
 import sys
-import logging
+from model.mylog import *
 import random
 import cPickle
-
+import feature
 class SparkModel(base.BaseModel):
 
     def __init__(self,model_file_name = ""):
         base.BaseModel.__init__(self,model_file_name)
         self.map = {}
+
+    @run_time
+    def feature_to_fdata(self,file_name):
+        transform_set = feature.read_transform("/home/wangzhe/ccf/data/feature/train/wz/transform.txt")
+        def handle(x):
+            line = x.split("\t")
+            return line[0],line[1:]
+
+        def handle2(x):
+            uid,values = x
+            label = '1' if uid in transform_broadcast.value else '0'
+            value_map = {}
+            for item in values:
+                key,value = item.split(":")
+                value_map[key] = float(value)
+            return uid,label,value_map
+
+        data = self.sc.textFile(file_name)
+        result = data.map(handle).reduceByKey(lambda x,y:list(x)+list(y))
+        transform_broadcast = self.sc.broadcast(transform_set)
+        fdata = result.map(handle2)
+
+        return fdata
 
     def divide_file(self,file_name,scale):
         data = self.sc.textFile(file_name)
@@ -68,6 +91,7 @@ class SparkModel(base.BaseModel):
         self.map = new_map
         return new_map
 
+    @run_time
     def fdata_to_mdata(self,fdata):
         map = self.get_fdata_map(fdata)
         broadcast_map = self.sc.broadcast(map)
@@ -85,11 +109,11 @@ class SparkModel(base.BaseModel):
     def balance(self,data1,data2):
         data1_count = data1.count()
         data2_count = data2.count()
-        logging.info("{0} {1}".format(data1_count,data2_count))
+        mylog.info("{0} {1}".format(data1_count,data2_count))
         max_data,min_data = (data1,data2) if data1_count > data2_count else (data2,data1)
         scale = int(max(data1_count,data2_count)/min(data1_count,data2_count)) - 1
-        min_data = min_data.flatMap(lambda x:[x] * scale)
-        return max_data + min_data
+        new_min_data = min_data.flatMap(lambda x:[x] * int(scale*0.1))
+        return max_data + new_min_data
     # # 读取文件到RDD,并转化为labelpoint格式
     #
     # @logging.run_time
@@ -146,14 +170,11 @@ class SparkModel(base.BaseModel):
 
 
     # 读取特征文件,进行训练
-    @logging.run_time
+    @run_time
     def train_file(self,feature_file_name,**kwargs):
         fdata = self.file_to_fdata(feature_file_name)
         mdata = self.fdata_to_mdata(fdata)
-        mdata_buy = self.fdata_filter(mdata,lambda x:x[1].label == '1')
-        mdata_nobuy = self.fdata_filter(mdata,lambda x:x[1].label == '0')
-        mtrain_data = self.balance(mdata_buy,mdata_nobuy)
-        self.train_mdata(mtrain_data,**kwargs)
+        self.train_mdata(mdata,**kwargs)
 
 
     def save_model(self,model_file_name):
@@ -166,7 +187,7 @@ class SparkModel(base.BaseModel):
             self.model = cPickle.load(f)
 
     # 读取测试特征数据,得到准确率P,召回率R,F值
-    @logging.run_time
+    @run_time
     def evaluate_mdata(self,mdata):
         try:
             model = self.model
@@ -186,18 +207,19 @@ class SparkModel(base.BaseModel):
 
                 label = str(label)
                 predict = str(predict)
-                if predict == '1' or label == '1':
-                    logging.info("predict:{0}:{1}".format(label,predict),'blue')
+                # if predict == '1' or label == '1':
+                #     logging.info("predict:{0}:{1}".format(label,predict),'blue')
                 if label == predict == '1':
                     A += 1
                 elif label != '1' and predict == '1':
                     B += 1
                 elif label == '1' and predict != '1':
                     C += 1
-            logging.info("{0} {1} {2}".format(A,B,C),'red')
+            mylog.info("{0} {1} {2}".format(A,B,C),'blue')
             P = float(A )/ (A + B)
             R = float(A) / (A + C)
             F = 2*P*R/(P+R)
+            mylog.info("{0} {1} {2}".format(P,R,F))
             return P,R,F
         except Exception:
             return 0,0,0
@@ -209,7 +231,7 @@ class SparkModel(base.BaseModel):
 
     # 得到数据的分类结果
 
-    @logging.run_time
+    @run_time
     def predict_mdata(self,mdata):
         model = self.model
         # logging.info(data.collect())
@@ -224,7 +246,7 @@ class SparkModel(base.BaseModel):
     #     data = self.format_file(file_name)
     #     return self.predict_data(data)
 
-    @logging.run_time
+    @run_time
     def submit_file(self,input_file_name,save_file_name):
         fdata = self.file_to_fdata(input_file_name)
         mdata = self.fdata_to_mdata(fdata)
