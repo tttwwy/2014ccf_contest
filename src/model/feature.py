@@ -2,22 +2,22 @@
 # created by WangZhe on 2014/11/2
 import os
 import collections
-from model.mylog import *
+from mylog import *
+
 from operator import add
 
 hive_path = '/opt/apache-hive-0.13.1-bin/bin/hive'
 work_dir = '/home/wangzhe/ccf/data/feature/train/wz/'
 database = 'ccf_train'
 
-def read_hive(sql):
+def read_hive(sql,type):
     execute = '''{0} -e "{1}" --database {2}'''.format(hive_path,sql,database)
     print execute
     for line in os.popen(execute):
         line_list = line.strip().split("\t")
         logging.debug(line_list)
-        if len(line_list) == 1:
-            line_list.append('NULL')
-        yield line_list
+        if len(line_list) + 1 == type:
+            yield line_list
 
 
 def handle(feature_name,sql):
@@ -26,10 +26,10 @@ def handle(feature_name,sql):
     with open(work_dir + feature_name + ".txt",'w') as f:
         uid_dict = collections.defaultdict(list)
         if type == 3:
-            for uid,value in read_hive(sql):
+            for uid,value in read_hive(sql,type):
                 uid_dict[uid].append((feature_name,value))
         else:
-            for uid,key,value in read_hive(sql):
+            for uid,key,value in read_hive(sql,type):
                 uid_dict[uid].append((feature_name+key,value))
 
         for uid,key_value_list in uid_dict.iteritems():

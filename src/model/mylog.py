@@ -49,6 +49,7 @@ logging = mylog()
 
 
 def run_time(func):
+
     def new_func(*args, **args2):
         start = time.time()
         logging.info("{0}:start".format(func.__name__))

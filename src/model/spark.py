@@ -7,7 +7,8 @@ from pyspark.mllib.regression import LabeledPoint
 from pyspark.mllib.linalg import SparseVector
 
 import sys
-from model.mylog import *
+from mylog import *
+
 import random
 import cPickle
 import feature
@@ -37,7 +38,9 @@ class SparkModel(base.BaseModel):
         result = data.map(handle).reduceByKey(lambda x,y:list(x)+list(y))
         transform_broadcast = self.sc.broadcast(transform_set)
         fdata = result.map(handle2)
+        fdata.cache()
 
+        logging.info("feature count {0}:{1}".format(file_name,fdata.count()))
         return fdata
 
     def divide_file(self,file_name,scale):
@@ -74,8 +77,11 @@ class SparkModel(base.BaseModel):
         fdata = data.map(parse_line)
         return fdata
 
+    @run_time
     def fdata_filter(self,fdata,f):
+        logging.info("fdata count start:{0}".format(fdata.count()))
         filter_data = fdata.filter(f)
+        logging.info("filter_data count end:{0}".format(filter_data.count()))
         return filter_data
 
 
@@ -106,67 +112,32 @@ class SparkModel(base.BaseModel):
         mdata = fdata.map(parse)
         return mdata
 
-    def balance(self,data1,data2):
+    def balance(self,data1,data2,balance_scale=1.0):
         data1_count = data1.count()
         data2_count = data2.count()
-        mylog.info("{0} {1}".format(data1_count,data2_count))
+        logging.info("{0} {1}".format(data1_count,data2_count))
         max_data,min_data = (data1,data2) if data1_count > data2_count else (data2,data1)
         scale = int(max(data1_count,data2_count)/min(data1_count,data2_count)) - 1
-        new_min_data = min_data.flatMap(lambda x:[x] * int(scale*0.1))
+        new_min_data = min_data.flatMap(lambda x:[x] * int(scale*balance_scale))
         return max_data + new_min_data
-    # # 读取文件到RDD,并转化为labelpoint格式
-    #
-    # @logging.run_time
-    # def format_file(self,file_name):
-    #     data = self.sc.textFile(file_name)
-    #     # logging.info(data.collect())
-    #     result_data =  self.format_data(data)
-    #     # logging.info(result_data.collect())
-    #     return result_data
 
-    # @logging.run_time
-    # def count_data_size(self,data):
-    #     def parse_line(line):
-    #         line_list = line.strip().split("\t")
-    #         indexs = [int(x.split(":")[0]) for x in line_list[2:]]
-    #         return max(indexs)
-    #     size = data.map(parse_line).reduce(lambda x,y:max((x,y))) + 1
-    #     return size
-    #
-    # @logging.run_time
-    # def count_fdata_size(self,fdata):
-    #     def parse_line(line):
-    #         line_list = line.strip().split("\t")
-    #         indexs = [int(x.split(":")[0]) for x in line_list[2:]]
-    #         return max(indexs)
-    #     size = data.map(parse_line).reduce(lambda x,y:max((x,y))) + 1
-    #     return size
+    def mdata_to_balance_mdata(self,mdata,balance_scale):
+        mdata_buy = self.fdata_filter(mdata,lambda x:x[1].label == '1')
+        mdata_nobuy = self.fdata_filter(mdata,lambda x:x[1].label == '0')
+        balance_mdata = self.balance(mdata_buy,mdata_nobuy,balance_scale)
+        return balance_mdata
 
-    # @logging.run_time
-    # def format_data(self,data):
-    #     size = self.count_data_size(data)
-    #     logging.info(size)
-    #     if self.data_format_type == 0:
-    #         def parse_line(line):
-    #             line_list = line.strip().split("\t")
-    #             uid = line_list[0]
-    #             label = line_list[1]
-    #             values = [float(x.split(":")[1]) for x in line_list[2:]]
-    #             return ( uid,LabeledPoint(label,values) )
-    #     else:
-    #         def parse_line(line):
-    #             line_list = line.strip().split("\t")
-    #             uid = line_list[0]
-    #             label = line_list[1]
-    #             values = {}
-    #             for item in line_list[2:]:
-    #                 key,value = item.split(":")
-    #                 values[int(key)] = float(value)
-    #             logging.info("{0} {1}:{2}".format(uid,label,values))
-    #             return ( uid,LabeledPoint(label,SparseVector(size,values)) )
-    #
-    #     result_data = data.map(parse_line)
-    #     return result_data
+    @run_time
+    def mdata_to_file(self,mdata,save_file_name):
+        logging.info(save_file_name)
+        with open(save_file_name,'w') as f:
+            for line in mdata.collect():
+                uid = line[0]
+                label = line[1].label
+                features = line[1].features
+                f.write("{0},{1},{2}\n".format(uid,label,",".join([str(x) for x in features.toArray()])))
+
+
 
 
     # 读取特征文件,进行训练
@@ -176,15 +147,21 @@ class SparkModel(base.BaseModel):
         mdata = self.fdata_to_mdata(fdata)
         self.train_mdata(mdata,**kwargs)
 
-
+    @run_time
     def save_model(self,model_file_name):
         model = self.model
-        with open(model_file_name,"w") as f:
+        map = self.map
+        with open(model_file_name + ".model","w") as f:
             cPickle.dump(model,f)
+        with open(model_file_name + ".index","w") as f:
+            cPickle.dump(map,f)
 
+    @run_time
     def load_model(self,model_file_name):
-        with open(model_file_name,"r") as f:
+        with open(model_file_name+".model","r") as f:
             self.model = cPickle.load(f)
+        with open(model_file_name+".index","r") as f:
+            self.map = cPickle.load(f)
 
     # 读取测试特征数据,得到准确率P,召回率R,F值
     @run_time
@@ -215,11 +192,11 @@ class SparkModel(base.BaseModel):
                     B += 1
                 elif label == '1' and predict != '1':
                     C += 1
-            mylog.info("{0} {1} {2}".format(A,B,C),'blue')
+            logging.info("{0} {1} {2}".format(A,B,C))
             P = float(A )/ (A + B)
             R = float(A) / (A + C)
             F = 2*P*R/(P+R)
-            mylog.info("{0} {1} {2}".format(P,R,F))
+            logging.info("{0} {1} {2}".format(P,R,F))
             return P,R,F
         except Exception:
             return 0,0,0
@@ -234,12 +211,12 @@ class SparkModel(base.BaseModel):
     @run_time
     def predict_mdata(self,mdata):
         model = self.model
-        # logging.info(data.collect())
         uid_predict = mdata.map(lambda p:(p[0],model.predict(p[1].features)))
-        # uid_predict = data.map( lambda p:(p[0],p[1].features,model.predict(p[1].features)) )
+        # uid_predict = mdata.map(lambda p:(p[0],model.predict_value(p[1].features)))
+        result = uid_predict.collect()
+        # logging.debug(result)
 
-        # logging.info(uid_predict.collect())
-        return uid_predict.collect()
+        return result
 
     # @logging.run_time
     # def predict_file(self,file_name):
@@ -248,9 +225,11 @@ class SparkModel(base.BaseModel):
 
     @run_time
     def submit_file(self,input_file_name,save_file_name):
-        fdata = self.file_to_fdata(input_file_name)
+        fdata = self.feature_to_fdata(input_file_name)
+        self.submit_fdata(fdata,save_file_name)
+
+    @run_time
+    def submit_fdata(self,fdata,save_file_name):
         mdata = self.fdata_to_mdata(fdata)
         result_list = self.predict_mdata(mdata)
         self.submit_data(result_list,save_file_name)
-
-

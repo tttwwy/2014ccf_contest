@@ -1,7 +1,7 @@
 __author__ = 'WangZhe'
 # coding=utf-8
 import spark
-from model.mylog import *
+from mylog import *
 from pyspark.mllib.classification import SVMWithSGD
 
 
@@ -14,12 +14,9 @@ class SVM(spark.SparkModel):
         self.data_format_type = 1
 
     @run_time
-    def train_mdata(self,mdata,**kwargs):
-        mdata_buy = self.fdata_filter(mdata,lambda x:x[1].label == '1')
-        mdata_nobuy = self.fdata_filter(mdata,lambda x:x[1].label == '0')
-        train_mdata = self.balance(mdata_buy,mdata_nobuy)
-
-        train_data = train_mdata.map(lambda x:x[1])
+    def train_mdata(self,mdata,balance_scale,**kwargs):
+        balance_mdata = self.mdata_to_balance_mdata(mdata,balance_scale)
+        train_data = balance_mdata.map(lambda x:x[1])
         kwargs["data"] = train_data
         self.model = SVMWithSGD.train(**kwargs)
 

@@ -1,7 +1,7 @@
 __author__ = 'WangZhe'
 # coding=utf-8
 import time
-from model.mylog import *
+from mylog import *
 
 class BaseModel():
 
@@ -45,9 +45,9 @@ class BaseModel():
         index = 0
         with open(save_file_name,'w') as f:
             for uid,predict in predict_list:
-                # logging.info("{0}:{1}".format(uid,predict))
-                if str(predict) == '1':
+                logging.info("{0}:{1}".format(uid,predict))
+                if int(predict) == 1:
                     f.write(uid + "\n")
                     index += 1
 
-        mylog.info(index,'blue')
+        logging.info(index)
