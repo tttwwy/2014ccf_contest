@@ -33,6 +33,11 @@ def mylog():
     gLogger.setLevel(logging.INFO)
     return gLogger
 
+def train_log(str):
+    log_file = "/home/wangzhe/ccf/src/train.log"
+    with open(log_file,'a') as f:
+        f.write("{0}\n".format(str))
+
 logging = mylog()
 #     logging.basicConfig(level=mylog.DEBUG,
 #                     format=' %(asctime)s %(filename)s line:%(lineno)d %(funcName)s :%(message)s',

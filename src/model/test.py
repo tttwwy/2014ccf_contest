@@ -4,14 +4,10 @@
 if __name__ == "__main__":
     pass
 
-class A:
-    str = 'a'
-    def test(self):
-        print str
+def A(a,b,c):
+    print a,b,c
 
-temp1 = A()
-temp1.test()
-temp1.str = 'b'
-temp2 = A()
-temp2.test()
+def B(**kwars):
+    A(**kwars)
 
+B(a=1,b=2,c=3,d=4)

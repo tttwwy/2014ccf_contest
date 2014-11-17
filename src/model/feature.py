@@ -61,7 +61,7 @@ def feature_to_fdata(file_name):
     sc = SparkContext(appName="feature_to_fdata")
     data = sc.textFile(file_name)
     result = data.map(handle).reduceByKey(lambda x,y:list(x)+list(y))
-    transform_set = read_transform("/home/wangzhe/ccf/data/feature/train/wz/transform.txt")
+    transform_set = read_transform("/home/wangzhe/ccf/data/feature/transform.txt")
     transform_broadcast = sc.broadcast(transform_set)
 
     def handle2(x):
@@ -84,7 +84,7 @@ def spark_combine(input,output):
     sc = SparkContext(appName="combine")
     data = sc.textFile(os.path.join(work_dir,input))
     result = data.map(handle).reduceByKey(lambda x,y:list(x)+list(y)).collect()
-    transform_set = read_transform("/home/wangzhe/ccf/data/feature/train/wz/transform.txt")
+    transform_set = read_transform("/home/wangzhe/ccf/data/feature/transform.txt")
 
     with open(os.path.join(work_dir,output),'w') as f:
         for uid,result_list in result:
