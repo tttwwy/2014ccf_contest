@@ -17,12 +17,14 @@ class SparkModel(base.BaseModel):
 
     def __init__(self,model_file_name = ""):
         self.map = {}
+
         base.BaseModel.__init__(self,model_file_name)
+        # if not SparkModel.sc:
+        #     SparkModel.sc = SparkContext(appName="ccf")
         try:
             SparkModel.sc = SparkContext(appName="ccf")
         except:
             pass
-        self.feature_names = []
 
     @run_time
     def features_to_fdata(self,work_dir,*args):
@@ -42,6 +44,8 @@ class SparkModel(base.BaseModel):
         data = SparkModel.sc.textFile(file_name)
         fdata = self.data_to_fdata(data)
         return fdata
+    def get_sc(self):
+        return SparkModel.sc
 
     @run_time
     def data_to_fdata(self,data):
@@ -125,29 +129,41 @@ class SparkModel(base.BaseModel):
         mdata = fdata.map(parse)
         return mdata
 
+    # @run_time
+    # def fdata_to_mdata(self,fdata):
+    #     def parse(line):
+    #         uid,label,values = line
+    #         return (uid,LabeledPoint(label,SparseVector(23640,values)))
+    #     mdata = fdata.map(parse)
+    #     return mdata
+
     @run_time
-    def balance(self,data1,data2,balance_scale=1.0,is_sample=False):
+    def balance(self,data1,data2,balance_scale=1.0):
         data1_count = data1.count()
         data2_count = data2.count()
         logging.info("{0} {1}".format(data1_count,data2_count))
+        logging.info(balance_scale)
         max_data,min_data = (data1,data2) if data1_count > data2_count else (data2,data1)
         if balance_scale <= 1:
+            logging.info("nono")
             scale = int(max(data1_count,data2_count)/min(data1_count,data2_count)) - 1
             new_min_data = min_data.flatMap(lambda x:[x] * int(scale*balance_scale))
             return max_data + new_min_data
 
         else:
+            logging.info("lalala")
             scale = min(data1_count,data2_count)*balance_scale*1.0/(max(data1_count,data2_count))
             seed = random.randint(0,10000)
             new_max_data = max_data.sample(False,scale,seed)
+            logging.info("{0} {1}".format(min_data.count(),new_max_data.count()))
+
             return min_data + new_max_data
 
 
-    @run_time
-    def mdata_to_balance_mdata(self,mdata,balance_scale,is_sample=False):
+    def mdata_to_balance_mdata(self,mdata,balance_scale):
         mdata_buy = self.fdata_filter(mdata,lambda x:x[1].label == '1')
         mdata_nobuy = self.fdata_filter(mdata,lambda x:x[1].label == '0')
-        balance_mdata = self.balance(mdata_buy,mdata_nobuy,balance_scale,is_sample)
+        balance_mdata = self.balance(mdata_buy,mdata_nobuy,balance_scale)
         return balance_mdata
 
     @run_time
@@ -169,19 +185,21 @@ class SparkModel(base.BaseModel):
                 features = line[1].features
                 f.write("{0},{1},{2}\n".format(uid,label,",".join([str(x) for x in features.toArray()])))
 
-    def train_fdata(self,fdata,balance_scale,**kwars):
+    def train_fdata(self,fdata,balance_scale,**kwargs):
         self.map = {}
         mdata = self.fdata_to_mdata(fdata)
-        self.train_mdata(mdata,balance_scale,**kwars)
+        balance_mdata = self.mdata_to_balance_mdata(mdata,balance_scale)
+        train_data = balance_mdata.map(lambda x:x[1])
+        self.train_args["scale"] = balance_scale
+        self.train_mdata(mdata,balance_scale,**kwargs)
 
     @run_time
-    def train_mdata(self,mdata,balance_scale,is_sample=False,**kwargs):
-        balance_mdata = self.mdata_to_balance_mdata(mdata,balance_scale,is_sample)
-        train_data = balance_mdata.map(lambda x:x[1])
-        kwargs["data"] = train_data
+    def train_mdata(self,mdata,**kwargs):
+        mtrain_data = mdata.map(lambda x:x[1])
+        kwargs["data"] = mtrain_data
         self.train_model(**kwargs)
-        kwargs["scale"] = balance_scale
-        self.train_args = kwargs
+        self.train_args.update(kwargs)
+
 
 
     @run_time
@@ -208,9 +226,9 @@ class SparkModel(base.BaseModel):
 
     # 读取测试特征数据,得到准确率P,召回率R,F值
     @run_time
-    def evaluate_mdata(self,mdata):
+    def evaluate_mdata(self,mdata,result_num = 2000):
         uid_label_predict = self.predict_mdata(mdata)
-        return self.get_score(uid_label_predict)
+        return self.get_score(uid_label_predict,result_scale=result_num)
 
     @run_time
     def get_score(self,uid_label_predict,result_scale):
@@ -223,7 +241,7 @@ class SparkModel(base.BaseModel):
                 label = str(label)
 
                 # predict = '1' if predict > 0.5 else '0'
-                predict = '1' if index < result_num or (result_num == 0 and predict >= 0.5) else '0'
+                predict = '1' if index < result_num or (result_num == 0) else '0'
                 if label == predict == '1':
                     A += 1
                 elif label != '1' and predict == '1':
@@ -250,13 +268,20 @@ class SparkModel(base.BaseModel):
         return self.evaluate_mdata(mdata)
 
     # 得到数据的分类结果
+    #
+    # def predict(self,features):
+    #     return self.model.predict_value(features)
 
     @run_time
     def predict_mdata(self,mdata):
         model = self.model
         uid_predict = mdata.map(lambda p:(p[0],p[1].label,model.predict_value(p[1].features)))
+        # uid_predict = mdata.map(lambda p:(p[0],p[1].label,model.predict_value(p[1].features)))
+
         result = uid_predict.collect()
         result = sorted(result,lambda x,y:cmp(x[2],y[2]),reverse=True)
+        logging.info(result[:100])
+        logging.info(result[-100:])  
         return result
 
     def predict_fdata(self,fdata):
@@ -271,7 +296,7 @@ class SparkModel(base.BaseModel):
     @run_time
     def record_submit(self,P,R,F1,submit_count,result_scale=0):
         try:
-            log_list = [F1,P,R,submit_count,result_scale,self.model_name,self.train_args['scale'],",".join(self.feature_names)]
+            log_list = [F1,P,R,submit_count,result_scale,self.model_name,self.train_args['scale'],",".join(self.feature_names),self.train_args['min_click']]
             log_list.append(self.train_args['regType'])
             log_list.append(self.train_args['regParam'])
             log_list.append(self.train_args['iterations'])

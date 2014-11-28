@@ -7,99 +7,75 @@ from model import combine
 
 from model import feature
 from model.mylog import *
-
-def drange(start, stop, step):
-    r = start
-    while r < stop:
-        yield r
-        r += step
-
+from model import bagging
+import time
 if __name__ == "__main__":
-    # 特征筛选实验
+
     logging.info("train model begin:")
-    feature_lists = [
-    (["uc01","us01","uc12","us12"],0.05),
-    ]
+    # model = lr.LR()
+    model = svm.SVM()
 
-    # model_list = [
-    # svm.SVM("/home/wangzhe/ccf/data/model/SVM.uc01,us01,uc12,us12.0.05"),
-    # svm.SVM("/home/wangzhe/ccf/data/model/SVM.uc01.0.05"),
-    # # svm.SVM("/home/wangzhe/ccf/data/model/SVM.uc12.0.05"),
-    # svm.SVM("/home/wangzhe/ccf/data/model/SVM.uc12.0.08"),
-    # svm.SVM("/home/wangzhe/ccf/data/model/SVM.us01.0.03"),
-    # svm.SVM("/home/wangzhe/ccf/data/model/SVM.us12.0.03")
-    # ]
-
-    # model_list = [
-    # lr.LR("/home/wangzhe/ccf/data/model/LR.uc01,us01,uc12,us12.0.05"),
-    # lr.LR("/home/wangzhe/ccf/data/model/LR.uc01.0.05"),
-    # lr.LR("/home/wangzhe/ccf/data/model/LR.uc12.0.05"),
-    # lr.LR("/home/wangzhe/ccf/data/model/LR.uc12.0.08"),
-    # lr.LR("/home/wangzhe/ccf/data/model/LR.us01.0.03"),
-    # lr.LR("/home/wangzhe/ccf/data/model/LR.us12.0.03")
-    # ]
-
-    model = lr.LR("/home/wangzhe/ccf/data/model/LR.us01.0.03")
-    lr_model = lr.LR()
-    svm_model = svm.SVM()
-    revere_map = {value:key for key,value in model.map.iteritems()}
-    logging.info("old feature count:{0}".format(len(revere_map)))
-
-    new_feature = set([revere_map[index] for index,weight in enumerate(model.model.weights) if abs(weight) > 0.0000001])
-    logging.info("new feature count:{0}".format(len(new_feature)))
-    logging.info(new_feature)
-    fdata = lr_model.features_to_fdata("/home/wangzhe/ccf/data/feature/train/",True,"us01")
-    def feature_filter(line):
-        uid,label,features = line
-        global new_feature
+    ffilter_data = model.feature_to_fdata("/home/wangzhe/ccf/data/feature/train/us01.txt")
+    ffilter_data = ffilter_data.filter(lambda x:x[1] == '1')
+    spids = set(ffilter_data.flatMap(lambda x:[item[4:] for item in x[2].keys()]).distinct().collect())
+    broadcast_spids = model.get_sc().broadcast(spids)
+    def clean(line):
+        uid,label,values = line
         new_values = {}
-        for key,value in features.iteritems():
-            if key in new_feature:
+        for key,value in values.iteritems():
+            if key[4:] in broadcast_spids.value:
                 new_values[key] = value
-
         return uid,label,new_values
 
-    ftrain_data,ftest_data = lr_model.divide_data(fdata,0.75)
-    ftrain_data_new = ftrain_data.map(feature_filter)
-    ftest_data_new = ftest_data.map(feature_filter)
-    balance_scales = [0.05,0.03]
-    for balance_scale in balance_scales:
-        # model.evaluate_fdata(ftest_data)
-        # lr_model.train_fdata(balance_scale=balance_scale,regType='l2',regParam=1.0,iterations=100,step = 0.5,miniBatchFraction=1.0,intercept=False,fdata=ftrain_data_new)
-        # lr_model.evaluate_fdata(ftest_data_new)
-        svm_model.map = {}
+    feature_lists = [
+        ['us01']
+        ]
+    for feature_list in feature_lists:
+        ftrain_data = model.features_to_fdata("/home/wangzhe/ccf/data/feature/train/",*feature_list)
+        ftest_data = model.features_to_fdata("/home/wangzhe/ccf/data/feature/validation/",*feature_list)
+
+        fdata_buy = ftrain_data.filter(lambda x:x[1] == '1')
+        fdata_nobuy = ftrain_data.filter(lambda x:x[1] == '0')
+        fdata_nobuy = fdata_nobuy.map(clean)
+        logging.info("filter count:{0}".format(fdata_nobuy.count()))
+        # fdata_nobuy = fdata_nobuy.filter(lambda x:len(x[2]) > 0)
+        # logging.info("filter count:{0}".format(fdata_nobuy.count()))
+
+        # ftest_data = ftest_data.map(clean)
+        # logging.info("filter count:{0}".format(ftest_data.count()))
+        # ftest_data = ftest_data.filter(lambda x:len(x[2]) > 0)
+        # logging.info("filter count:{0}".format(ftest_data.count()))
+
+        # fdata_nobuy = fdata_nobuy.filter(lambda x:x[2].get('u16',0) > min_click)
+        # fdata_nobuy = fdata_nobuy.map(clear)
+        # fdata_buy = fdata_buy.map(clear)
+
+        # ftest_data = ftest_data.filter(lambda x:x[2].get('u16',0) > min_click)
 
 
-        svm_model.train_fdata(balance_scale=balance_scale,regType='l2',regParam=1.0,iterations=100,step = 0.5,miniBatchFraction=1.0,intercept=False,fdata=ftrain_data)
-        svm_model.evaluate_fdata(ftest_data)
-        logging.info(len(svm_model.map))
-        svm_model.map = {}
-        svm_model.train_fdata(balance_scale=balance_scale,regType='l2',regParam=1.0,iterations=100,step = 0.5,miniBatchFraction=1.0,intercept=False,fdata=ftrain_data_new)
-        logging.info(len(svm_model.map))
-
-        svm_model.evaluate_fdata(ftest_data_new)
-
+        balance_scales = [0.08]
+        for balance_scale in balance_scales:
+            model.map = {}
+            ftrain_data = model.balance(fdata_buy,fdata_nobuy,balance_scale)
+            mtrain_data = model.fdata_to_mdata(ftrain_data)
+            model.train_args['scale'] = balance_scale
+            # model.train_args['min_click'] = min_click
 
 
-    # for model in models:
-    #     model = svm.SVM()
-    #     feature_lists = [
-    #         (["uc01","us01","uc12","us12"],0.05),
-    #         (["uc01"],0.05),
-    #          (["us01"],0.03),
-    #           (["uc12"],0.05),
-    #           (["uc12"],0.08),
-    #            (["us12"],0.03),
-    #         ]
-    #     for feature_list,balance_scale in feature_lists:
-    #             model.map= {}
-    #             fdata = model.features_to_fdata("/home/wangzhe/ccf/data/feature/train/",*feature_list)
-    #             mdata = model.fdata_to_mdata(fdata)
-    #             mtrain_data,mtest_data = model.divide_data(mdata,0.75)
-    #             model.train_mdata(balance_scale=balance_scale,regType='l2',regParam=4.0,iterations=100,step = 0.5,miniBatchFraction=1.0,intercept=False,mdata=mtrain_data)
-    #             model.save_model("/home/wangzhe/ccf/data/model/{0}.{1}.{2}".format(model.model_name,",".join(feature_list),balance_scale))
-    #             model.evaluate_mdata(mtest_data)
-    #
-    #             logging.info("train model end:")
-    #
+            # model.train_fdata(balance_scale=balance_scale,regType='l2',regParam=1.0,iterations=100,step = 0.5,miniBatchFraction=1.0,intercept=False,fdata=ftrain_data)
 
+            model.train_mdata(mdata=mtrain_data,regType='l2',regParam=1.0,iterations=100,step = 0.5,miniBatchFraction=1.0,intercept=False)
+            # model.save_model("/home/wangzhe/ccf/data/model/lr")
+            # for result_scale in [0,0.0027,0.003,0.0033]:
+            # cur_time = time.time()-60
+            for result_scale in [0.0057]:
+                model.evaluate_fdata(ftest_data,result_scale)
+                # model.load_model("/home/wangzhe/ccf/data/model/lr")
+                # dis_time = time.time() - cur_time
+                # logging.info(dis_time)
+                # if dis_time < 40:
+                #     time.sleep(40 - dis_time)
+                # model.submit_fdata(ftest_data,"submit.txt",result_scale)
+                # cur_time = time.time()
+
+                logging.info("train model end:")

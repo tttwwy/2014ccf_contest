@@ -99,8 +99,8 @@ class Combine(spark.SparkModel):
         # logging.info(balance_fdata.take(3))
         kwargs["data"] = balance_fdata
         self.train_model(core_model,**kwargs)
-        kwargs["scale"] = balance_scale
-        self.train_args = kwargs
+        self.train_args["scale"] = balance_scale
+        self.train_args.update(kwargs)
 
     @run_time
     def predict_fdata(self,fdata):
